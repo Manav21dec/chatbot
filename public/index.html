@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rev - Revolt Motors Voice Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .voice-controls {
+            margin: 2rem 0;
+        }
+
+        .mic-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+            font-size: 2rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .mic-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .mic-button.listening {
+            background: linear-gradient(45deg, #26de81, #20bf6b);
+            animation: pulse 2s infinite;
+        }
+
+        .mic-button.processing {
+            background: linear-gradient(45deg, #fed330, #f7b731);
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(38, 222, 129, 0.4);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(38, 222, 129, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(38, 222, 129, 0);
+            }
+        }
+
+        .status {
+            margin: 1rem 0;
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .status.connected {
+            color: #26de81;
+        }
+
+        .status.error {
+            color: #ff6b6b;
+        }
+
+        .status.listening {
+            color: #3742fa;
+        }
+
+        .instructions {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 10px;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .audio-visualizer {
+            height: 60px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+        }
+
+        .bar {
+            width: 4px;
+            height: 20px;
+            background: #ddd;
+            border-radius: 2px;
+            transition: all 0.1s ease;
+        }
+
+        .bar.active {
+            background: #3742fa;
+            animation: bounce 0.5s infinite alternate;
+        }
+
+        @keyframes bounce {
+            to {
+                height: 40px;
+            }
+        }
+
+        .interrupt-btn {
+            background: #ff3838;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 25px;
+            cursor: pointer;
+            margin: 0.5rem;
+            font-size: 0.9rem;
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .interrupt-btn.visible {
+            opacity: 1;
+        }
+
+        .interrupt-btn:hover {
+            background: #ff1e1e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">Rev 🏍️</div>
+        <div class="subtitle">Revolt Motors Voice Assistant</div>
+        
+        <div class="status" id="status">Click to start voice chat</div>
+        
+        <div class="audio-visualizer" id="visualizer">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+        </div>
+
+        <div class="voice-controls">
+            <button class="mic-button" id="micButton">🎤</button>
+            <br>
+            <button class="interrupt-btn" id="interruptBtn">Stop Speaking</button>
+        </div>
+
+        <div class="instructions">
+            <strong>How to use:</strong><br>
+            • Click the microphone to start<br>
+            • Speak naturally about Revolt Motors<br>
+            • Click "Stop Speaking" to interrupt Rev<br>
+            • Ask about motorcycles, specifications, pricing, or dealerships
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        class VoiceChat {
+            constructor() {
+                this.socket = io();
+                this.mediaRecorder = null;
+                this.audioChunks = [];
+                this.isRecording = false;
+                this.isSessionActive = false;
+                this.audioContext = null;
+                this.audioQueue = [];
+                this.isPlaying = false;
+                
+                this.initializeElements();
+                this.initializeSocket();
+                this.setupEventListeners();
+            }
+
+            initializeElements() {
+                this.micButton = document.getElementById('micButton');
+                this.status = document.getElementById('status');
+                this.interruptBtn = document.getElementById('interruptBtn');
+                this.visualizer = document.getElementById('visualizer');
+                this.bars = this.visualizer.querySelectorAll('.bar');
+            }
+
+            initializeSocket() {
+                this.socket.on('session-ready', () => {
+                    this.isSessionActive = true;
+                    this.updateStatus('Ready to chat!', 'connected');
+                });
+
+                this.socket.on('audio-response', (data) => {
+                    this.playAudioResponse(data.audio);
+                });
+
+                this.socket.on('turn-complete', () => {
+                    this.interruptBtn.classList.remove('visible');
+                    this.isPlaying = false;
+                    this.stopVisualization();
+                });
+
+                this.socket.on('session-ended', () => {
+                    this.isSessionActive = false;
+                    this.updateStatus('Session ended. Click to restart.', 'error');
+                });
+
+                this.socket.on('error', (error) => {
+                    this.updateStatus(error.message, 'error');
+                });
+            }
+
+            setupEventListeners() {
+                this.micButton.addEventListener('click', () => {
+                    if (!this.isSessionActive) {
+                        this.startSession();
+                    } else if (!this.isRecording) {
+                        this.startRecording();
+                    } else {
+                        this.stopRecording();
+                    }
+                });
+
+                this.interruptBtn.addEventListener('click', () => {
+                    this.interrupt();
+                });
+            }
+
+            async startSession() {
+                try {
+                    this.updateStatus('Connecting...', 'listening');
+                    this.socket.emit('start-voice-session');
+                } catch (error) {
+                    this.updateStatus('Failed to start session', 'error');
+                }
+            }
+
+            async startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            sampleRate: 16000,
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true
+                        } 
+                    });
+                    
+                    this.mediaRecorder = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.audioChunks = [];
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            this.audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    this.mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+                        this.processAudioInput(audioBlob);
+                    };
+                    
+                    this.mediaRecorder.start();
+                    this.isRecording = true;
+                    this.micButton.classList.add('listening');
+                    this.updateStatus('Listening... Click again to stop', 'listening');
+                    this.startVisualization();
+                    
+                } catch (error) {
+                    console.error('Error starting recording:', error);
+                    this.updateStatus('Microphone access denied', 'error');
+                }
+            }
+
+            stopRecording() {
+                if (this.mediaRecorder && this.isRecording) {
+                    this.mediaRecorder.stop();
+                    this.isRecording = false;
+                    this.micButton.classList.remove('listening');
+                    this.micButton.classList.add('processing');
+                    this.updateStatus('Processing...', 'listening');
+                    this.stopVisualization();
+                }
+            }
+
+            async processAudioInput(audioBlob) {
+                try {
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    
+                    // Convert to PCM
+                    const pcmData = this.convertToPCM(audioBuffer);
+                    const base64Audio = btoa(String.fromCharCode.apply(null, pcmData));
+                    
+                    this.socket.emit('audio-input', { audio: base64Audio });
+                    this.interruptBtn.classList.add('visible');
+                    this.micButton.classList.remove('processing');
+                    
+                } catch (error) {
+                    console.error('Error processing audio:', error);
+                    this.updateStatus('Error processing audio', 'error');
+                    this.micButton.classList.remove('processing');
+                }
+            }
+
+            convertToPCM(audioBuffer) {
+                const length = audioBuffer.length;
+                const arrayBuffer = new ArrayBuffer(length * 2);
+                const view = new DataView(arrayBuffer);
+                const channelData = audioBuffer.getChannelData(0);
+                
+                for (let i = 0; i < length; i++) {
+                    const sample = Math.max(-1, Math.min(1, channelData[i]));
+                    view.setInt16(i * 2, sample * 0x7FFF, true);
+                }
+                
+                return new Uint8Array(arrayBuffer);
+            }
+
+            async playAudioResponse(base64Audio) {
+                try {
+                    this.isPlaying = true;
+                    this.startVisualization();
+                    this.updateStatus('Rev is speaking...', 'listening');
+                    
+                    if (!this.audioContext) {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    
+                    const audioData = atob(base64Audio);
+                    const arrayBuffer = new ArrayBuffer(audioData.length);
+                    const view = new Uint8Array(arrayBuffer);
+                    
+                    for (let i = 0; i < audioData.length; i++) {
+                        view[i] = audioData.charCodeAt(i);
+                    }
+                    
+                    // Convert PCM to AudioBuffer
+                    const audioBuffer = this.audioContext.createBuffer(1, arrayBuffer.byteLength / 2, 16000);
+                    const channelData = audioBuffer.getChannelData(0);
+                    const dataView = new DataView(arrayBuffer);
+                    
+                    for (let i = 0; i < channelData.length; i++) {
+                        channelData[i] = dataView.getInt16(i * 2, true) / 0x7FFF;
+                    }
+                    
+                    const source = this.audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(this.audioContext.destination);
+                    
+                    source.onended = () => {
+                        if (this.isPlaying) {
+                            this.stopVisualization();
+                            this.updateStatus('Your turn! Click to speak', 'connected');
+                        }
+                    };
+                    
+                    source.start();
+                    
+                } catch (error) {
+                    console.error('Error playing audio:', error);
+                    this.updateStatus('Error playing response', 'error');
+                    this.isPlaying = false;
+                    this.stopVisualization();
+                }
+            }
+
+            interrupt() {
+                this.socket.emit('interrupt');
+                this.interruptBtn.classList.remove('visible');
+                this.isPlaying = false;
+                this.stopVisualization();
+                this.updateStatus('Interrupted. Your turn!', 'connected');
+            }
+
+            startVisualization() {
+                this.bars.forEach((bar, index) => {
+                    setTimeout(() => {
+                        bar.classList.add('active');
+                    }, index * 100);
+                });
+            }
+
+            stopVisualization() {
+                this.bars.forEach(bar => {
+                    bar.classList.remove('active');
+                });
+            }
+
+            updateStatus(message, type = '') {
+                this.status.textContent = message;
+                this.status.className = `status ${type}`;
+            }
+        }
+
+        // Initialize the app when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new VoiceChat();
+        });
+    </script>
+</body>
+</html>
